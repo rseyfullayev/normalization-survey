@@ -4,6 +4,12 @@ import torch.nn.functional as f
 from torch.utils.data import DataLoader
 from torchvision.models import resnet18, resnet34, resnet50
 from src.datasets.cifar100 import SimCLRDataset
+from src.ssl.logger import init_wandb
+import wandb
+
+
+
+
 
 
 def get_norm_layer(layer, num_groups=32):
@@ -101,14 +107,19 @@ def train_simclr(model_name, norm_type, epochs=10, batch_size=32):
 
             optimizer.zero_grad()
 
-            z_i = f.normalize(model(img_i), dim=1)
-            z_j = f.normalize(model(img_j), dim=1)
+            z_i = model(img_i)
+            z_j = model(img_j)
 
             loss = nt_xent_loss(z_i, z_j)
             loss.backward()
             optimizer.step()
 
             total_loss += loss.item()
+        avg_loss = total_loss / len(loader)
+
+        wandb.log({
+            "loss": avg_loss
+        }, step=epoch)
 
         print(f"Epoch {epoch + 1}/{epochs} | Loss: {total_loss / len(loader):.4f}")
 
@@ -184,9 +195,17 @@ def compute_intra_inter(features, labels):
 
 if __name__ == "__main__":
 
+    init_wandb("resnet50","batch", 256, 50)
+
     trained_backbone, fet, lab = train_simclr("resnet50", norm_type="batch", epochs=5)
 
     intr, inte = compute_intra_inter(fet, lab)
 
+    wandb.log({
+        "intra": intr,
+        "inter": inte,
+        "ratio": inte / intr
+    })
+
     print(intr, inte)
-    print("Training finished. Backbone is ready for extraction.")
+    print("Training finished.")
