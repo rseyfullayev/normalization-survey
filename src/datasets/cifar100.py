@@ -1,88 +1,67 @@
-import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader, random_split
 from torchvision import datasets, transforms as T
+from torch.utils.data import Dataset
 
 
 MEAN = (0.5071, 0.4867, 0.4408)
-STD  = (0.2675, 0.2565, 0.2761)
+STD = (0.2675, 0.2565, 0.2761)
+
+class SimCLRAugmentations:
+    def __init__(self, size=224):
+        self.size = size
+
+        color_jitter = T.ColorJitter(
+            brightness=0.8,
+            contrast=0.8,
+            saturation=0.8,
+            hue=0.2
+        )
+
+        self.transform = T.Compose([
+            T.RandomResizedCrop(self.size),
+            T.RandomHorizontalFlip(p=0.5),
+            T.RandomApply([color_jitter], p=0.8),
+            T.RandomGrayscale(p=0.2),
+            T.GaussianBlur(kernel_size=23),
+            T.ToTensor(),
+            T.Normalize(MEAN, STD),
+        ])
+
+    def __call__(self, image):
+        view1 = self.transform(image)
+        view2 = self.transform(image)
+        return view1, view2
 
 
-def vector_norm(x: torch.Tensor, ord: str = "l2", eps: float = 1e-6) -> torch.Tensor:
 
-    if ord not in ["l1", "l2", "linf"]:
-        return x
+class SimCLRDataset(Dataset):
+    def __init__(self, dataset_name, size=32):
+        self.size = size
+        self.transform = SimCLRAugmentations(size=size)
 
-    v = x.view(-1)
-    if ord == "l1":
-        s = v.abs().sum()
-    elif ord == "l2":
-        s = torch.sqrt((v * v).sum())
-    elif ord == "linf":
-        s = v.abs().max()
+        dataset_class = self.choose_dataset(dataset_name)
 
-    s = s.clamp(min=eps)
-    v = v / s
-    return v.view_as(x)
+        self.dataset = dataset_class(
+            root="data",
+            train=True,
+            download=True
+        )
 
-class PerSampleNormalize(nn.Module):
+    def choose_dataset(self, dataset_name):
+        if dataset_name == "cifar100":
+            return datasets.CIFAR100
+        elif dataset_name == "cifar10":
+            return datasets.CIFAR10
+        else:
+            raise ValueError("Unsupported dataset")
 
-    def __init__(self, ord: str = "l2"):
-        super().__init__()
-        self.ord = ord
+    def __getitem__(self, idx):
+        image, _ = self.dataset[idx]
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return vector_norm(x, ord=self.ord)
+        view1, view2 = self.transform(image)
 
+        return view1, view2
 
-def make_transform(img_size=32, norm_type="none"):
-
-    transform_list = [
-        T.RandomCrop(img_size, padding=4),
-        T.RandomHorizontalFlip(),
-        T.ToTensor()
-    ]
+    def __len__(self):
+        return len(self.dataset)
 
 
-    if norm_type in ["l1", "l2", "linf"]:
-        transform_list.append(PerSampleNormalize(ord=norm_type))
-
-
-    transform_list.append(T.Normalize(mean=MEAN, std=STD))
-    return T.Compose(transform_list)
-
-def make_test_transform(norm_type="none"):
-    transform_list = [T.ToTensor()]
-    if norm_type in ["l1", "l2", "linf"]:
-        transform_list.append(PerSampleNormalize(ord=norm_type))
-    transform_list.append(T.Normalize(mean=MEAN, std=STD))
-    return T.Compose(transform_list)
-
-
-def loadData(batch=128, valid=5000, workers=2, seed=42, norm_type="none"):
-
-    train_tf = make_transform(norm_type=norm_type)
-    test_tf = make_test_transform(norm_type=norm_type)
-
-    trainset = datasets.CIFAR100(root="data", train=True, download=True, transform=train_tf)
-    testset  = datasets.CIFAR100(root="data", train=False, download=True, transform=test_tf)
-
-    gen = torch.Generator().manual_seed(seed)
-    train_len = len(trainset) - valid
-    train_subset, valid_subset = random_split(trainset, [train_len, valid], generator=gen)
-
-    train_loader = DataLoader(train_subset, batch_size=batch, shuffle=True, num_workers=workers)
-    val_loader = DataLoader(valid_subset, batch_size=batch, shuffle=False, num_workers=workers)
-    test_loader = DataLoader(testset, batch_size=batch, shuffle=False, num_workers=workers)
-
-    return train_loader, val_loader, test_loader
-
-
-if __name__ == "__main__":
-
-    for norm_type in ["none", "l1", "l2", "linf"]:
-        print(f"\ncifar-100 loaders with {norm_type.upper()} normalization")
-        train_loader, val_loader, test_loader = loadData(norm_type=norm_type)
-        images, labels = next(iter(train_loader))
-        print("batch shape:", images.shape, "| labels:", labels.shape)
-        print("first image mean:", images[0].mean().item())

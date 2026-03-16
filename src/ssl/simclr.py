@@ -4,12 +4,14 @@ import torch.nn.functional as F
 from tqdm import tqdm
 
 def _flatten_feats(x):
-
     if x.dim() == 4:
         x = F.adaptive_avg_pool2d(x, 1).flatten(1)
     elif x.dim() > 2:
         x = x.view(x.size(0), -1)
     return x
+
+
+
 
 class SimCLR(nn.Module):
     def __init__(self, encoder, projector):
